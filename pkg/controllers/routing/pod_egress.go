@@ -3,6 +3,7 @@ package routing
 import (
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/golang/glog"
@@ -14,18 +15,19 @@ var (
 	podEgressArgs = []string{"-m", "set", "--match-set", podSubnetsIPSetName, "src",
 		"-m", "set", "!", "--match-set", podSubnetsIPSetName, "dst",
 		"-m", "set", "!", "--match-set", nodeAddrsIPSetName, "dst",
-		"-j", "MASQUERADE"}
+		"-j", "SNAT", "--to-source"}
 	podEgressArgsBad = [][]string{{"-m", "set", "--match-set", podSubnetsIPSetName, "src",
 		"-m", "set", "!", "--match-set", podSubnetsIPSetName, "dst",
 		"-j", "MASQUERADE"}}
 )
 
-func createPodEgressRule() error {
+func createPodEgressRule(ip net.IP) error {
 	iptablesCmdHandler, err := iptables.New()
 	if err != nil {
 		return errors.New("Failed create iptables handler:" + err.Error())
 	}
 
+	podEgressArgs = append(podEgressArgs, ip.String())
 	err = iptablesCmdHandler.AppendUnique("nat", "POSTROUTING", podEgressArgs...)
 	if err != nil {
 		return errors.New("Failed to add iptable rule to masqurade outbound traffic from pods: " +
@@ -37,12 +39,13 @@ func createPodEgressRule() error {
 	return nil
 }
 
-func deletePodEgressRule() error {
+func deletePodEgressRule(ip net.IP) error {
 	iptablesCmdHandler, err := iptables.New()
 	if err != nil {
 		return errors.New("Failed create iptables handler:" + err.Error())
 	}
 
+	podEgressArgs = append(podEgressArgs, ip.String())
 	exists, err := iptablesCmdHandler.Exists("nat", "POSTROUTING", podEgressArgs...)
 	if err != nil {
 		return errors.New("Failed to lookup iptable rule to masqurade outbound traffic from pods: " + err.Error())
