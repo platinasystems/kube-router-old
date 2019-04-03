@@ -115,7 +115,7 @@ func (hc *HealthController) CheckHealth() bool {
 
 	if hc.Config.RunRouter {
 		if time.Since(hc.Status.NetworkRoutingControllerAlive) > hc.Config.RoutesSyncPeriod+hc.Status.NetworkRoutingControllerAliveTTL+graceTime {
-			glog.Error("Network Routing Controller heartbeat missed")
+			//glog.Error("Network Routing Controller heartbeat missed")
 			health = true // #hack
 		}
 	}

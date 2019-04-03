@@ -84,7 +84,7 @@ type netlinkCalls interface {
 }
 
 // LinuxNetworking interface contains all linux networking subsystem calls
-//go:generate moq -out network_services_controller_moq.go . LinuxNetworking
+// xxxxxxgoxxxx:generate moq -out network_services_controller_moq.go . LinuxNetworking
 type LinuxNetworking interface {
 	ipvsCalls
 	netlinkCalls
@@ -196,6 +196,7 @@ func newLinuxNetworking() (*linuxNetworking, error) {
 type NetworkServicesController struct {
 	nodeIP              net.IP
 	nodeHostName        string
+	nodeRole            string
 	syncPeriod          time.Duration
 	mu                  sync.Mutex
 	serviceMap          serviceInfoMap
@@ -561,9 +562,22 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		}
 
 		// assign cluster IP of the service to the dummy interface so that its routable from the pod's on the node
+
 		err := nsc.ln.ipAddrAdd(dummyVipInterface, svc.clusterIP.String(), true)
 		if err != nil {
+			glog.Errorf("Failed to add cluster IP %s to dummy interface", svc.clusterIP.String())
 			continue
+		}
+
+		// assign ExternalIP to dummy interface.. may be qualify it based on DSR is set and node role as master..
+		if strings.Compare(nsc.nodeRole, "master") == 0 {
+			for _, externalIP := range svc.externalIPs {
+				glog.Infof("Adding external ip " + externalIP + " to interface " + KUBE_DUMMY_IF)
+				err = nsc.ln.ipAddrAdd(dummyVipInterface, externalIP, false)
+				if err != nil {
+					glog.Errorf("Failed to add ExtIP %s to dummy interface", externalIP)
+				}
+			}
 		}
 
 		// create IPVS service for the service to be exposed through the cluster ip
@@ -636,6 +650,7 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		for _, externalIP := range extIPSet.List() {
 			var externalIpServiceId string
 			if svc.directServerReturn && svc.directServerReturnMethod == "tunnel" {
+
 				ipvsExternalIPSvc, err := nsc.ln.ipvsAddFWMarkService(net.ParseIP(externalIP), protocol, uint16(svc.port), svc.sessionAffinity, svc.scheduler)
 				if err != nil {
 					glog.Errorf("Failed to create ipvs service for External IP: %s due to: %s", externalIP, err.Error())
@@ -653,7 +668,10 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 				}
 
 				// ensure VIP less director. we dont assign VIP to any interface
-				err = nsc.ln.ipAddrDel(dummyVipInterface, externalIP)
+
+				if strings.Compare(nsc.nodeRole, "master") != 0 {
+					err = nsc.ln.ipAddrDel(dummyVipInterface, externalIP)
+				}
 
 				// do policy routing to deliver the packet locally so that IPVS can pick the packet
 				err = routeVIPTrafficToDirector("0x" + fmt.Sprintf("%x", fwMark))
@@ -777,6 +795,16 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 		if len(endpoints) > 0 && strings.Contains(k, "-") {
 			parts := strings.SplitN(k, "-", 3)
 			addrActive[parts[0]] = true
+		}
+	}
+
+	// qualify this as only for master nodes..
+	if strings.Compare(nsc.nodeRole, "master") == 0 {
+		for k, svc := range serviceInfoMap {
+			for _, externalIP := range svc.externalIPs {
+				glog.Infof("SyncIPServices: Svc %s Keeping external ip %s oon interface %s \n", k, externalIP, KUBE_DUMMY_IF)
+				addrActive[externalIP] = true
+			}
 		}
 	}
 
@@ -1093,6 +1121,7 @@ func (nsc *NetworkServicesController) buildServicesInfo() serviceInfoMap {
 				svcInfo.directServerReturn = true
 				svcInfo.directServerReturnMethod = dsrMethod
 			}
+			glog.Infof("DSR method for Service %s: %s\n", dsrMethod, svc.ObjectMeta.Name)
 			svcInfo.scheduler = ipvs.RoundRobin
 			schedulingMethod, ok := svc.ObjectMeta.Annotations[svcSchedulerAnnotation]
 			if ok {
@@ -1996,7 +2025,12 @@ func NewNetworkServicesController(clientset kubernetes.Interface,
 	if err != nil {
 		return nil, err
 	}
+
 	nsc.nodeIP = NodeIP
+
+	nsc.nodeRole, _ = utils.GetNodeRole(node)
+
+	glog.Infof("***** Node Role: %s *****\n", nsc.nodeRole)
 
 	nsc.podLister = podInformer.GetIndexer()
 

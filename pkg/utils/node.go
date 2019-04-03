@@ -58,3 +58,18 @@ func GetNodeIP(node *apiv1.Node) (net.IP, error) {
 	}
 	return nil, errors.New("host IP unknown")
 }
+
+func GetNodeRole(node *apiv1.Node) (string, error) {
+
+	nodeLabels := node.ObjectMeta.GetLabels()
+
+	if _, ok := nodeLabels["node-role.kubernetes.io/master"]; ok {
+		return "master", nil
+	}
+
+	if _, ok := nodeLabels["node-role.kubernetes.io/node"]; ok {
+		return "node", nil
+	}
+
+	return "unknown", nil
+}
