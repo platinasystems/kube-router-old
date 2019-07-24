@@ -802,8 +802,11 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 	if strings.Compare(nsc.nodeRole, "master") == 0 {
 		for k, svc := range serviceInfoMap {
 			for _, externalIP := range svc.externalIPs {
-				glog.Infof("SyncIPServices: Svc %s Keeping external ip %s oon interface %s \n", k, externalIP, KUBE_DUMMY_IF)
-				addrActive[externalIP] = true
+				endpoints := endpointsInfoMap[k]
+				if hasActiveEndpoints(svc, endpoints, nsc.podCidr) {
+					glog.Infof("SyncIPServices: Svc %s Keeping external ip %s on interface %s\n", k, externalIP, KUBE_DUMMY_IF)
+					addrActive[externalIP] = true
+				}
 			}
 		}
 	}
