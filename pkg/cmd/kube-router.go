@@ -163,6 +163,7 @@ func (kr *KubeRouter) Run() error {
 			return errors.New("Failed to create network services controller: " + err.Error())
 		}
 
+		podInformer.AddEventHandler(nsc.PodEventHandler)
 		svcInformer.AddEventHandler(nsc.ServiceEventHandler)
 		epInformer.AddEventHandler(nsc.EndpointsEventHandler)
 

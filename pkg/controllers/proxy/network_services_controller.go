@@ -51,6 +51,8 @@ const (
 	svcLocalAnnotation     = "kube-router.io/service.local"
 	svcSkipLbIpsAnnotation = "kube-router.io/service.skiplbips"
 
+	podIpvsWeight = "kube-router.io/pod.weight"
+
 	LeaderElectionRecordAnnotationKey = "control-plane.alpha.kubernetes.io/leader"
 )
 
@@ -214,6 +216,7 @@ type NetworkServicesController struct {
 	epLister  cache.Indexer
 	podLister cache.Indexer
 
+	PodEventHandler       cache.ResourceEventHandler
 	ServiceEventHandler   cache.ResourceEventHandler
 	EndpointsEventHandler cache.ResourceEventHandler
 }
@@ -399,6 +402,24 @@ func (nsc *NetworkServicesController) publishMetrics(serviceInfoMap serviceInfoM
 		}
 	}
 	return nil
+}
+
+// OnPodUpdate handle change in pod update from the API server
+func (nsc *NetworkServicesController) OnPodUpdate(obj interface{}) {
+	pod, ok := obj.(*api.Pod)
+	if !ok {
+		glog.Error("could not convert pod update object to *v1.Pod")
+		return
+	}
+	glog.V(1).Infof("OnPodUpdate %s/%s", pod.Namespace, pod.Name)
+	if !nsc.readyForUpdates {
+		glog.V(3).Infof("Skipping update to pod: %s/%s, controller still performing bootup full-sync", pod.Namespace, pod.Name)
+		return
+	}
+	err := nsc.sync()
+	if err != nil {
+		glog.Errorf("Error syncing network services for the update to pod: %s/%s Error: %s", pod.Namespace, pod.Name, err)
+	}
 }
 
 // OnEndpointsUpdate handle change in endpoints update from the API server
@@ -723,7 +744,19 @@ func (nsc *NetworkServicesController) syncIpvsServices(serviceInfoMap serviceInf
 				Weight:        1,
 			}
 
-			err := nsc.ln.ipvsAddServer(ipvsClusterVipSvc, &dst, svc.local, nsc.podCidr)
+			podObj, err := nsc.getPodObjectForEndpoint(endpoint.ip)
+			if err != nil {
+				glog.Errorf(err.Error())
+			} else {
+				weight := podObj.ObjectMeta.Annotations[podIpvsWeight]
+				if weight != "" {
+					if i, err := strconv.Atoi(weight); err == nil {
+						dst.Weight = i
+					}
+				}
+			}
+
+			err = nsc.ln.ipvsAddServer(ipvsClusterVipSvc, &dst, svc.local, nsc.podCidr)
 			if err != nil {
 				glog.Errorf(err.Error())
 			}
@@ -1934,6 +1967,22 @@ func (nsc *NetworkServicesController) Cleanup() {
 	glog.Infof("Successfully cleaned the ipvs configuration done by kube-router")
 }
 
+func (nsc *NetworkServicesController) newPodEventHandler() cache.ResourceEventHandler {
+	return cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			nsc.OnPodUpdate(obj)
+
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			nsc.OnPodUpdate(newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			nsc.OnPodUpdate(obj)
+
+		},
+	}
+}
+
 func (nsc *NetworkServicesController) newEndpointsEventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
@@ -2036,6 +2085,7 @@ func NewNetworkServicesController(clientset kubernetes.Interface,
 	glog.Infof("***** Node Role: %s *****\n", nsc.nodeRole)
 
 	nsc.podLister = podInformer.GetIndexer()
+	nsc.PodEventHandler = nsc.newPodEventHandler()
 
 	nsc.svcLister = svcInformer.GetIndexer()
 	nsc.ServiceEventHandler = nsc.newSvcEventHandler()
