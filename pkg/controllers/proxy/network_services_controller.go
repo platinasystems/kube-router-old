@@ -1258,7 +1258,7 @@ func ensureMasqueradeIptablesRule(masqueradeAll bool, podCidr string) error {
 	}
 	var args []string
 	if masqueradeAll {
-		args = []string{"-m", "ipvs", "--ipvs", "--vdir", "ORIGINAL", "--vmethod", "MASQ", "-m", "comment", "--comment", "", "-j", "MASQUERADE"}
+		args = []string{"-m", "ipvs", "--ipvs", "--vdir", "ORIGINAL", "--vmethod", "MASQ", "-m", "comment", "--comment", "ipvs", "-j", "MASQUERADE"}
 		err = iptablesCmdHandler.AppendUnique("nat", "POSTROUTING", args...)
 		if err != nil {
 			return errors.New("Failed to run iptables command" + err.Error())
@@ -1266,7 +1266,7 @@ func ensureMasqueradeIptablesRule(masqueradeAll bool, podCidr string) error {
 	}
 	if len(podCidr) > 0 {
 		//TODO: ipset should be used for destination podCidr(s) match after multiple podCidr(s) per node get supported
-		args = []string{"-m", "ipvs", "--ipvs", "--vdir", "ORIGINAL", "--vmethod", "MASQ", "-m", "comment", "--comment", "",
+		args = []string{"-m", "ipvs", "--ipvs", "--vdir", "ORIGINAL", "--vmethod", "MASQ", "-m", "comment", "--comment", "ipvs",
 			"!", "-s", podCidr, "!", "-d", podCidr, "-j", "MASQUERADE"}
 		err = iptablesCmdHandler.AppendUnique("nat", "POSTROUTING", args...)
 		if err != nil {
